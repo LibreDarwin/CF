@@ -59,8 +59,12 @@
 #include <mach-o/dyld.h>
 #include <crt_externs.h>
 #include <dlfcn.h>
-#include <vproc.h>
-#include <vproc_priv.h>
+// CF-1153 relied on <os/lock.h> and <notify.h> arriving via <libkern/...> or
+// an umbrella header.  os/lock.h no longer carries OSSpinLock in its own right,
+// and notify_register_check()/notify_set_state() moved out of the private
+// <notify.h> into the public one, so both are named explicitly now.
+#include <libkern/OSSpinLockDeprecated.h>
+#include <notify.h>
 #include <sys/sysctl.h>
 #include <sys/stat.h>
 #include <mach/mach.h>
@@ -770,9 +774,22 @@ kern_return_t _CFDiscorporateMemoryMaterialize(CFDiscorporateMemory *hm) {
 
 #if DEPLOYMENT_TARGET_MACOSX
 
-#define SUDDEN_TERMINATION_ENABLE_VPROC 1
+// CF-1153 set this to 1 and included <vproc.h>/<vproc_priv.h> for the
+// vproc transaction API behind it.  Apple has since removed both headers
+// from the SDK, so the vproc-backed sudden-termination path cannot be built
+// against a current SDK and its includes have been dropped.
+//
+// The alternative half of this #if is not a stub: when this is 0 the file
+// still provides _CFSuddenTerminationDisable/Enable/ExitIfTerminationEnabled/
+// DisablingCount, backed by its own counter, so callers keep working.  What
+// is lost is the wiring that lets launchd reap a process which ignores a
+// pending quit, which requires the vproc API that no longer exists.  Set to
+// 1 only on a system that still provides <vproc_priv.h>.
+#define SUDDEN_TERMINATION_ENABLE_VPROC 0
 
 #if SUDDEN_TERMINATION_ENABLE_VPROC
+#include <vproc.h>
+#include <vproc_priv.h>
 
 static OSSpinLock __CFProcessKillingLock = OS_SPINLOCK_INIT;
 static CFIndex __CFProcessKillingDisablingCount = 1;
@@ -830,7 +847,7 @@ size_t _CFSuddenTerminationDisablingCount(void) {
 
 #warning Building with vproc sudden termination API disabled.
 
-static OSSpinLockUnlock __CFProcessKillingLock = OS_SPINLOCK_INIT;
+static OSSpinLock __CFProcessKillingLock = OS_SPINLOCK_INIT;
 static size_t __CFProcessKillingDisablingCount = 1;
 static Boolean __CFProcessExitNextTimeKillingIsEnabled = false;
 static int32_t __CFProcessExitStatus = 0;

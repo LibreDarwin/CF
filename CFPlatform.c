@@ -37,7 +37,13 @@
     #include <pwd.h>
     #include <crt_externs.h>
     #include <mach-o/dyld.h>
-    #include <pthread/tsd_private.h>
+    // CF-1153 included <pthread/tsd_private.h> here for
+    // __PTK_FRAMEWORK_COREFOUNDATION_KEY5 and _pthread_{get,set}specific_direct.
+    // Apple removed that header, and current CoreFoundation no longer uses a
+    // reserved key number at all: it allocates its own key with the public
+    // pthread_key_create() at startup, exactly as the Linux path below
+    // already does.  __CFTSDDarwinInitialize() below does the same, so no
+    // private pthread surface is needed.
 #endif
 
 #if DEPLOYMENT_TARGET_WINDOWS
@@ -510,10 +516,6 @@ CF_EXPORT int _NS_pthread_main_np() {
 // If thread data has been torn down, these functions should crash on CF_TSD_BAD_PTR + slot address.
 #define CF_TSD_MAX_SLOTS 70
 
-#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
-static const unsigned long CF_TSD_KEY = __PTK_FRAMEWORK_COREFOUNDATION_KEY5;
-#endif
-
 // Windows and Linux, not sure how many times the destructor could get called; CF_TSD_MAX_DESTRUCTOR_CALLS could be 1
 
 #define CF_TSD_BAD_PTR ((void *)0x1000)
@@ -566,9 +568,28 @@ CF_PRIVATE void __CFTSDLinuxInitialize() {
 
 #endif
 
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+
+static pthread_key_t __CFTSDIndexKey;
+
+// Called from CFRuntime's startup code on Darwin.
+//
+// CF-1153 hardcoded the private __PTK_FRAMEWORK_COREFOUNDATION_KEY5 slot and
+// reached the thread data through the private _pthread_getspecific_direct() /
+// _pthread_setspecific_direct().  Apple removed <pthread/tsd_private.h>, and
+// current CoreFoundation no longer reserves a key number at all: it allocates
+// its own key with the public pthread_key_create() at startup.  This does the
+// same, so the key is private to this instance of the library and no private
+// pthread surface is required.
+CF_PRIVATE void __CFTSDDarwinInitialize(void) {
+    (void)pthread_key_create(&__CFTSDIndexKey, __CFTSDFinalize);
+}
+
+#endif
+
 static void __CFTSDSetSpecific(void *arg) {
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
-    _pthread_setspecific_direct(CF_TSD_KEY, arg);
+    pthread_setspecific(__CFTSDIndexKey, arg);
 #elif DEPLOYMENT_TARGET_LINUX
     pthread_setspecific(__CFTSDIndexKey, arg);
 #elif DEPLOYMENT_TARGET_WINDOWS
@@ -578,7 +599,7 @@ static void __CFTSDSetSpecific(void *arg) {
 
 static void *__CFTSDGetSpecific() {
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
-    return _pthread_getspecific_direct(CF_TSD_KEY);
+    return pthread_getspecific(__CFTSDIndexKey);
 #elif DEPLOYMENT_TARGET_LINUX
     return pthread_getspecific(__CFTSDIndexKey);
 #elif DEPLOYMENT_TARGET_WINDOWS
@@ -618,9 +639,8 @@ static void __CFTSDFinalize(void *arg) {
     }
 }
 
-#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
-extern int pthread_key_init_np(int, void (*)(void *));
-#endif
+// The key itself is created by __CFTSDDarwinInitialize()/__CFTSDLinuxInitialize()
+// and by DllMain on Windows, so there is no lazy per-thread registration here.
 
 // Get or initialize a thread local storage. It is created on demand.
 static __CFTSDTable *__CFTSDGetTable() {
@@ -633,10 +653,13 @@ static __CFTSDTable *__CFTSDGetTable() {
     if (!table) {
         // This memory is freed in the finalize function
         table = (__CFTSDTable *)calloc(1, sizeof(__CFTSDTable));
-        // Windows and Linux have created the table already, we need to initialize it here for other platforms. On Windows, the cleanup function is called by DllMain when a thread exits. On Linux the destructor is set at init time.
-#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
-        pthread_key_init_np(CF_TSD_KEY, __CFTSDFinalize);
-#endif
+        // Windows and Linux create the key ahead of time - DllMain does it on
+        // Windows, __CFTSDLinuxInitialize() does it on Linux - and Darwin does
+        // it in __CFTSDDarwinInitialize(), which __CFInitialize() calls before
+        // any thread can reach here.  CF-1153 instead called the private
+        // pthread_key_init_np() here to lazily re-initialize a fixed
+        // __PTK_FRAMEWORK_COREFOUNDATION_KEY5 slot, which re-registering on
+        // every miss could not do correctly; the key now has one owner.
         __CFTSDSetSpecific(table);
     }
     

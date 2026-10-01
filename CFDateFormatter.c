@@ -37,6 +37,7 @@
 #include "CFInternal.h"
 #include "CFLocaleInternal.h"
 #include "CFICULogging.h"
+#include <unicode/udatpg.h>
 #include <math.h>
 #include <float.h>
 

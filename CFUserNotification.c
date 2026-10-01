@@ -32,6 +32,7 @@
 #include <CoreFoundation/CFNumber.h>
 #include <CoreFoundation/CFRunLoop.h>
 #include "CFInternal.h"
+#include "CFPriv.h"
 #include <CoreFoundation/CFMachPort.h>
 #include <stdlib.h>
 #include <unistd.h>

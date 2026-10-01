@@ -148,6 +148,19 @@ CF_PRIVATE CFIndex __CFActiveProcessorCount();
     #else
         #error Compiler not supported
     #endif
+#elif defined(__arm64__) || defined(__aarch64__)
+    // CF-1153 only ever defined HALT for the two x86 architectures, so an
+    // arm64 build had no definition and every __CFAssert() that referenced it
+    // failed to compile.  brk #0x1000 is the arm64 breakpoint/trap
+    // instruction, the direct counterpart of int3 above; the kill() keeps the
+    // fallback behaviour of terminating even if the trap is stepped over.
+    #if defined(__GNUC__)
+        #define HALT do {asm __volatile__("brk #0x1000"); kill(getpid(), 9); __builtin_unreachable(); } while (0)
+    #elif defined(_MSC_VER)
+        #define HALT do { __debugbreak(); abort(); __builtin_unreachable(); } while (0)
+    #else
+        #error Compiler not supported
+    #endif
 #endif
 
 

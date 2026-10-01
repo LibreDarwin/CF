@@ -33,6 +33,7 @@
 #include <CoreFoundation/CFByteOrder.h>
 #include <limits.h>
 #include "CFInternal.h"
+#include "CFPriv.h"
 #include <mach/mach.h>
 #include <mach/message.h>
 #include <mach/mach_error.h>

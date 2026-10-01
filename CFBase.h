@@ -120,8 +120,17 @@
     typedef UInt8                   Byte;
     typedef SInt8                   SignedByte;
 #endif
+/* Modern <libkern/OSTypes.h> pulls in <MacTypes.h>, which defines __MACTYPES__
+ * and therefore suppresses the compatibility typedefs above.  Those typedefs
+ * also provided ScriptCode, which no shipped MacTypes.h defines any more, but
+ * CFPriv.h still declares it.  Reintroduce just that one when it is missing. */
+#if !defined(__CF_SCRIPTCODE_DEFINED__) && !defined(_SCRIPTCODE_DEFINED_)
+typedef SInt16                  ScriptCode;
+#define __CF_SCRIPTCODE_DEFINED__ 1
+#endif
+
 #if !defined(__MACTYPES__) || (defined(UNIVERSAL_INTERFACES_VERSION) && UNIVERSAL_INTERFACES_VERSION < 0x0340)
-    typedef UInt32                  UTF32Char;
+typedef UInt32                  UTF32Char;
     typedef UInt16                  UTF16Char;
     typedef UInt8                   UTF8Char;
 #endif

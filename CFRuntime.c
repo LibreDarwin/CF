@@ -765,12 +765,16 @@ extern void __CFPlugInInitialize(void);
 #if DEPLOYMENT_TARGET_LINUX
 CF_PRIVATE void __CFTSDLinuxInitialize();
 #endif
-#if DEPLOYMENT_TARGET_WINDOWS
-// From CFPlatform.c
-CF_PRIVATE void __CFTSDWindowsInitialize(void);
-CF_PRIVATE void __CFTSDWindowsCleanup(void);
-CF_PRIVATE void __CFFinalizeWindowsThreadData();
-#endif
+ #if DEPLOYMENT_TARGET_WINDOWS
+ // From CFPlatform.c
+ CF_PRIVATE void __CFTSDWindowsInitialize(void);
+ CF_PRIVATE void __CFTSDWindowsCleanup(void);
+ CF_PRIVATE void __CFFinalizeWindowsThreadData();
+ #endif
+ #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+ // From CFPlatform.c
+ CF_PRIVATE void __CFTSDDarwinInitialize(void);
+ #endif
 extern void __CFStreamInitialize(void);
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_WINDOWS
 extern void __CFXPreferencesInitialize(void);
@@ -914,6 +918,8 @@ void __CFInitialize(void) {
         __CFTSDWindowsInitialize();
 #elif DEPLOYMENT_TARGET_LINUX
         __CFTSDLinuxInitialize();
+#elif DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+        __CFTSDDarwinInitialize();
 #endif
         
         __CFProphylacticAutofsAccess = true;

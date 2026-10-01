@@ -38,6 +38,7 @@
 #include <CoreFoundation/CFNumber.h>
 #include <CoreFoundation/CFPriv.h>
 #include "CFInternal.h"
+#include "CFPriv.h"
 #include <sys/stat.h>
 #if DEPLOYMENT_TARGET_MACOSX
 #include <unistd.h>

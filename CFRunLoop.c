@@ -42,7 +42,7 @@
 #if DEPLOYMENT_TARGET_WINDOWS
 #include <typeinfo.h>
 #endif
-#include <checkint.h>
+#include "checkint.h"
 
 #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
 #include <sys/param.h>
@@ -53,10 +53,7 @@
 #include <mach/clock.h>
 #include <unistd.h>
 #include <dlfcn.h>
-#include <pthread/private.h>
 #include <os/voucher_private.h>
-extern mach_port_t _dispatch_get_main_queue_port_4CF(void);
-extern void _dispatch_main_queue_callback_4CF(mach_msg_header_t *msg);
 #elif DEPLOYMENT_TARGET_WINDOWS
 #include <process.h>
 DISPATCH_EXPORT HANDLE _dispatch_get_main_queue_handle_4CF(void);
@@ -75,10 +72,15 @@ DISPATCH_EXPORT void _dispatch_main_queue_callback_4CF(void);
 #if DEPLOYMENT_TARGET_WINDOWS || DEPLOYMENT_TARGET_IPHONESIMULATOR
 CF_EXPORT pthread_t _CF_pthread_main_thread_np(void);
 #define pthread_main_thread_np() _CF_pthread_main_thread_np()
+#elif DEPLOYMENT_TARGET_MACOSX
+/* macOS has no pthread_main_thread_np(); its pthread_main_np() returns an int
+ * (is-main-thread), not a pthread_t.  __CFInitialize records the main thread's
+ * pthread_t in _CFMainPThread, so read that instead. */
+extern pthread_t _CFMainPThread;
+#define pthread_main_thread_np() _CFMainPThread
 #endif
 
 #include <Block.h>
-#include <Block_private.h>
 
 #if DEPLOYMENT_TARGET_MACOSX
 #define USE_DISPATCH_SOURCE_FOR_TIMERS 1
@@ -430,14 +432,11 @@ typedef UnsignedWide		AbsoluteTime;
 #if USE_MK_TIMER_TOO
 extern mach_port_name_t mk_timer_create(void);
 extern kern_return_t mk_timer_destroy(mach_port_name_t name);
-extern kern_return_t mk_timer_arm(mach_port_name_t name, AbsoluteTime expire_time);
-extern kern_return_t mk_timer_cancel(mach_port_name_t name, AbsoluteTime *result_time);
+extern kern_return_t mk_timer_arm(mach_port_name_t name, uint64_t expire_time);
+extern kern_return_t mk_timer_cancel(mach_port_name_t name, uint64_t *result_time);
 
-CF_INLINE AbsoluteTime __CFUInt64ToAbsoluteTime(uint64_t x) {
-    AbsoluteTime a;
-    a.hi = x >> 32;
-    a.lo = x & (uint64_t)0xFFFFFFFF;
-    return a;
+CF_INLINE uint64_t __CFUInt64ToAbsoluteTime(uint64_t x) {
+    return x;
 }
 #endif
 
@@ -1943,7 +1942,7 @@ static void __CFArmNextTimerInMode(CFRunLoopModeRef rlm, CFRunLoopRef rl) {
                 
                 // Cancel the mk timer
                 if (rlm->_mkTimerArmed && rlm->_timerPort) {
-                    AbsoluteTime dummy;
+                    uint64_t dummy;
                     mk_timer_cancel(rlm->_timerPort, &dummy);
                     rlm->_mkTimerArmed = false;
                 }
@@ -1977,7 +1976,7 @@ static void __CFArmNextTimerInMode(CFRunLoopModeRef rlm, CFRunLoopRef rl) {
             // Disarm the timers - there is no timer scheduled
             
             if (rlm->_mkTimerArmed && rlm->_timerPort) {
-                AbsoluteTime dummy;
+                uint64_t dummy;
                 mk_timer_cancel(rlm->_timerPort, &dummy);
                 rlm->_mkTimerArmed = false;
             }
