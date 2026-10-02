@@ -36,7 +36,6 @@
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFURL.h>
 #include <CoreFoundation/CFFileSecurity.h>
-#include <CoreFoundation/CFURLEnumerator.h>
 #include <CoreFoundation/CFDate.h>
 #if TARGET_OS_MAC
 #include <sys/mount.h>
@@ -625,9 +624,6 @@ CFDataRef _CFURLCopySecurityScopeFromFileURL(CFURLRef url) CF_AVAILABLE(10_10, 8
 
 CF_EXPORT
 void _CFURLSetPermanentResourcePropertyForKey(CFURLRef url, CFStringRef key, CFTypeRef propertyValue) CF_AVAILABLE(10_10, 8_0);
-
-CF_EXPORT
-CFURLEnumeratorResult _CFURLEnumeratorGetURLsBulk(CFURLEnumeratorRef enumerator, CFIndex maximumURLs, CFIndex *actualURLs, CFURLRef *urls, CFErrorRef *error) CF_AVAILABLE(10_6, 4_0);
 
 // Returns a string describing the bookmark data. For debugging purposes only.
 CF_EXPORT

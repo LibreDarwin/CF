@@ -715,6 +715,16 @@ CF_PRIVATE const void *CFUniCharGetMappingData(uint32_t type) {
 
         __CFUniCharMappingTables = (const void **)CFAllocatorAllocate(kCFAllocatorSystemDefault, sizeof(const void *) * count, 0);
 
+        // The size verification above is a no-op in this configuration, so a
+        // headerSize that does not match this table (e.g. the wrong byte order
+        // was embedded, or the file is truncated) yields a nonsensical count and
+        // the allocation fails.  Bail out rather than storing through NULL below.
+        if (NULL == __CFUniCharMappingTables) {
+            CFLog(kCFLogLevelCritical, CFSTR("Could not allocate CFUnicode mapping tables."));
+            __CFUnlock(&__CFUniCharMappingTableLock);
+            return NULL;
+        }
+
         for (idx = 0;idx < count;idx++) {
 #if defined (__cplusplus)            
 			__CFUniCharMappingTables[idx] = (char *)bodyBase + *((uint32_t *)bytes); bytes = (uint8_t *)bytes + sizeof(uint32_t);

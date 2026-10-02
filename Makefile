@@ -37,9 +37,14 @@ MAX_MACOSX_VERSION=110000
 # CoreFoundation's own headers - checkint.h, CFFileSecurity.h - live here in the
 # CF source tree, not in any of the trees above.
 SDKROOT_CF ?= /Users/sunneva/xnuports-root/devel/xcode-tools/build/release/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.Internal.sdk
-ICU_PREFIX ?= /opt/homebrew/opt/icu4c
-ICU_INCLUDE = $(ICU_PREFIX)/include
-ICU_LIB = $(ICU_PREFIX)/lib
+# The Internal SDK carries no ICU at all.  CF still needs Apple's own ICU rather
+# than upstream: its headers differ in ways CF depends on (ualoc_getDefault(),
+# the UADATPG_FORCE_*_HOUR_CYCLE options), and UCNV_{TO,FROM}_U_CALLBACK_STOP
+# are real exported functions in Apple's ICU where upstream ICU defines them as
+# NULL macros.  libicucore.A.tbd is the link-time stub for the libicucore.dylib
+# that ships in the runtime, and it exports every symbol this build references.
+PUBLIC_SDK ?= /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk
+ICU_TBD = $(PUBLIC_SDK)/usr/lib/libicucore.A.tbd
 
 # Absolute, because it is consumed both as a make prerequisite (relative to this
 # directory) and as a symlink target (relative to $(XMAP) two levels deeper).
@@ -57,7 +62,7 @@ TREE_LIBC = $(DARWIN_ROOT)/CoreOS/Sources/Libc
 TREE_LIBNOTIFY = $(DARWIN_ROOT)/CoreOS/Sources/Libnotify
 XMAP = $(OBJBASE)/xmap
 
-TREE_INCLUDES = -I$(TREE_LAUNCHD)/liblaunch -I$(TREE_LIBPTHREAD)/private -I$(XMAP) -I$(TREE_LIBDISPATCH) -I$(TREE_ICU)/common -I$(TREE_ICU)/i18n -I$(TREE_XNU)/bsd -I$(TREE_XNU)/libsyscall -I$(TREE_LIBC)/stdtime/FreeBSD -I$(TREE_LIBNOTIFY)
+TREE_INCLUDES = -I$(TREE_LAUNCHD)/liblaunch -I$(TREE_LIBPTHREAD)/private -I$(XMAP) -I$(TREE_LIBDISPATCH) -I$(TREE_ICU)/common -I$(TREE_ICU)/i18n -I$(TREE_LIBC)/stdtime/FreeBSD -I$(TREE_LIBNOTIFY)
 
 OBJECTS = $(patsubst %.c,%.o,$(wildcard *.c))
 OBJECTS += CFBasicHash.o
@@ -69,7 +74,18 @@ PUBLIC_HEADERS=CFArray.h CFBag.h CFBase.h CFBinaryHeap.h CFBitVector.h CFBundle.
 PRIVATE_HEADERS=CFBundlePriv.h CFCharacterSetPriv.h CFError_Private.h CFLogUtilities.h CFPriv.h CFRuntime.h CFStorage.h CFStreamAbstract.h CFStreamPriv.h CFStreamInternal.h CFStringDefaultEncoding.h CFStringEncodingConverter.h CFStringEncodingConverterExt.h CFUniChar.h CFUnicodeDecomposition.h CFUnicodePrecomposition.h ForFoundationOnly.h CFBurstTrie.h CFICULogging.h CFFileSecurity.h checkint.h
 
 MACHINE_TYPE := $(shell uname -m)
-unicode_data_file_name = $(if $(or $(findstring i386,$(1)),$(findstring i686,$(1)),$(findstring x86_64,$(1))),CFUnicodeData-L.mapping,CFUnicodeData-B.mapping)
+
+# CFUniCharGetMappingData() reads the mapping table's headerSize field with a
+# plain native-width load and never byte-swaps it, so the embedded table MUST
+# match the host's byte order or headerSize decodes as garbage (0x24 stored
+# big-endian reads as 0x24000000 = 603979776 on a little-endian host, which
+# becomes a ~1.2GB unchecked CFAllocatorAllocate that fails, and the following
+# loop then writes through the NULL result and crashes).
+#
+# Default to the little-endian table and only switch to the big-endian one for
+# known big-endian hosts, so newly added architectures are correct by default
+# rather than silently picking the wrong table.
+unicode_data_file_name = $(if $(filter ppc ppc970 powerpc powerpc64 s390x s390 sparc m68k hppa,$(1)),CFUnicodeData-B.mapping,CFUnicodeData-L.mapping)
 
 OBJBASE_ROOT = CF-Objects
 OBJBASE = $(OBJBASE_ROOT)/$(STYLE)
@@ -83,18 +99,32 @@ STYLE_LFLAGS=
 ARCHFLAGS ?= -arch $(shell uname -m)
 INSTALLNAME=/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation_$(STYLE)
 
-CC ?= /Users/sunneva/xnuports-root/devel/xcode-tools/build/release/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang
+# "CC ?=" cannot work here: GNU Make predefines CC=cc, which is always already
+# defined, so the default would silently resolve to Xcode's cc instead of the
+# xcode-tools toolchain this tree is built with.  Override the built-in, while
+# still allowing an explicit "make CC=..." on the command line.
+ifeq ($(origin CC),default)
+CC := /Users/sunneva/xnuports-root/devel/xcode-tools/build/release/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang
+endif
 
-CFLAGS=-c -x c -pipe -std=gnu99 -Wmost -Wno-trigraphs -Wno-deprecated -isysroot $(SDKROOT_CF) -mmacosx-version-min=$(MIN_MACOSX_VERSION) -fconstant-cfstrings -fexceptions -DCF_BUILDING_CF=1 -DDEPLOYMENT_TARGET_MACOSX=1 -DMAC_OS_X_VERSION_MAX_ALLOWED=$(MAX_MACOSX_VERSION) -DU_SHOW_DRAFT_API=1 -DU_SHOW_CPLUSPLUS_API=0 -I$(OBJBASE) -I$(XMAP) $(TREE_INCLUDES) -I$(ICU_INCLUDE) -DVERSION=$(VERSION) -include ./CoreFoundation_Prefix.h
+CFLAGS=-c -x c -pipe -std=gnu99 -Wmost -Wno-trigraphs -Wno-deprecated -isysroot $(SDKROOT_CF) -mmacosx-version-min=$(MIN_MACOSX_VERSION) -fconstant-cfstrings -fexceptions -DCF_BUILDING_CF=1 -DDEPLOYMENT_TARGET_MACOSX=1 -DMAC_OS_X_VERSION_MAX_ALLOWED=$(MAX_MACOSX_VERSION) -DU_SHOW_DRAFT_API=1 -DU_SHOW_CPLUSPLUS_API=0 -I$(OBJBASE) -I$(XMAP) $(TREE_INCLUDES) -DVERSION=$(VERSION) -include ./CoreFoundation_Prefix.h
 
 LFLAGS=-dynamiclib -isysroot $(SDKROOT_CF) -mmacosx-version-min=$(MIN_MACOSX_VERSION) -twolevel_namespace -fexceptions -init ___CFInitialize -compatibility_version 150 -current_version $(VERSION) -Wl,-alias_list,SymbolAliases -sectcreate __UNICODE __csbitmaps CFCharacterSetBitmaps.bitmap -sectcreate __UNICODE __properties CFUniCharPropertyDatabase.data -sectcreate __UNICODE __data $(call unicode_data_file_name,$(MACHINE_TYPE)) -segprot __UNICODE r r
 
-# CF-1153 linked -licucore.A, Apple's private ICU, which no longer ships in the
-# SDK.  The locale, calendar, collation, string-transform and encoding work in
-# CFLocale.c/CFCalendar.c/CFICUConverters.c and friends is now satisfied by
-# upstream ICU; two Apple-only entry points that are still called live in
-# shims/unicode/ualoc.h and shims/CFICUDatePatternCompat.h.
-ICU_LFLAGS=-L$(ICU_LIB) -licui18n -licuuc
+# CF-1153 linked -licucore.A, Apple's private ICU, which the Internal SDK no
+# longer carries.  It is resolved from the public SDK's stub instead, against
+# the same headers in $(TREE_ICU) - see SDKROOT_CF above for why Apple's ICU is
+# required rather than upstream's.
+ICU_LFLAGS=$(ICU_TBD) -Wl,-search_paths_first
+
+# No explicit -lSystem is needed.  It was previously required because
+# -I$(TREE_XNU)/bsd made the *kernel* sys/cdefs.h shadow the SDK's userspace one,
+# which turned on the $UNIX2003/$INODE64 suffixed libc re-exports (close$UNIX2003,
+# opendir$INODE64, ~160 of them).  Those include roots are gone, so the ordinary
+# unsuffixed symbols are part of the implicit link set again.  Keep this comment
+# as the marker: if -lSystem is ever reintroduced, verify the undefined-symbol
+# count actually drops, because the tbd-based ICU stub may mask it.
+SYS_LFLAGS=
 
 
 .PHONY: all install clean
@@ -153,7 +183,7 @@ $(OBJBASE)/%.o: %.m $(INTERMEDIATE_HFILES) $(XMAPS)
 	$(CC) $(STYLE_CFLAGS) $(ARCHFLAGS) $(CFLAGS) $< -o $@
 
 $(OBJBASE)/CoreFoundation_$(STYLE): $(addprefix $(OBJBASE)/,$(OBJECTS))
-	$(CC) $(STYLE_LFLAGS) -install_name $(INSTALLNAME) $(ARCHFLAGS) $(LFLAGS) $^ $(ICU_LFLAGS) -o $(OBJBASE)/CoreFoundation_$(STYLE)
+	$(CC) $(STYLE_LFLAGS) -install_name $(INSTALLNAME) $(ARCHFLAGS) $(LFLAGS) $^ $(SYS_LFLAGS) $(ICU_LFLAGS) -o $(OBJBASE)/CoreFoundation_$(STYLE)
 
 install: $(OBJBASE)/CoreFoundation_$(STYLE)
 	/bin/rm -rf $(DSTBASE)/CoreFoundation.framework

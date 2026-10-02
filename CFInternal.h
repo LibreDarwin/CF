@@ -396,7 +396,13 @@ extern CFTypeRef CFMakeUncollectable(CFTypeRef cf);
 
 CF_PRIVATE void _CFRaiseMemoryException(CFStringRef reason);
 
-CF_PRIVATE Boolean __CFProphylacticAutofsAccess;
+// CF_PRIVATE expands to a visibility attribute only, so a declaration of the
+// form "CF_PRIVATE Boolean x;" is a *tentative* definition in C and gets emitted
+// into every translation unit that includes this header.  With clang's default
+// -fno-common that means one copy per object file, and the link fails with 73
+// duplicate symbols.  The other file-scope declarations above already say
+// "extern" for this reason; this one has to as well.
+extern CF_PRIVATE Boolean __CFProphylacticAutofsAccess;
 
 
 #if DEPLOYMENT_TARGET_MACOSX

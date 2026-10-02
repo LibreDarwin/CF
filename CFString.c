@@ -64,7 +64,9 @@
 #define INSTRUMENT_SHARED_STRINGS 0
 #endif
 
-CF_PRIVATE const CFStringRef __kCFLocaleCollatorID;
+// extern, or this tentative definition is emitted here as well as in CFLocale.c,
+// where the real definition lives, and the two collide at link time.
+extern CF_PRIVATE const CFStringRef __kCFLocaleCollatorID;
 
 #if INSTRUMENT_SHARED_STRINGS
 #include <sys/stat.h> /* for umask() */

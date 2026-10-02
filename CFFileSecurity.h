@@ -53,7 +53,7 @@
 
 #include <CoreFoundation/CFBase.h>
 
-#if CF_PLATFORM_MAC
+#if TARGET_OS_MAC
 
 typedef const struct __CFFileSecurity *CFFileSecurityRef;
 
@@ -65,6 +65,6 @@ CF_PRIVATE CFStringRef CFFileSecurityGetOwner(CFFileSecurityRef security);
 CF_PRIVATE CFStringRef CFFileSecurityGetGroup(CFFileSecurityRef security);
 CF_PRIVATE UInt16 CFFileSecurityGetMode(CFFileSecurityRef security);
 
-#endif /* CF_PLATFORM_MAC */
+#endif /* TARGET_OS_MAC */
 
 #endif /* _CF_HEADERS_CFFILESECURITY_H_ */

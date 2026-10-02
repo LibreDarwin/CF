@@ -44,7 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pwd.h>
-#include <NSSystemDirectories.h>
+#include "CFSystemDirectoriesPrivate.h"
 
 CFSearchPathEnumerationState __CFStartSearchPathEnumeration(CFSearchPathDirectory dir, CFSearchPathDomainMask domainMask) {
     return NSStartSearchPathEnumeration(dir, domainMask);
