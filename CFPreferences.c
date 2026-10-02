@@ -39,6 +39,7 @@
 #include <CoreFoundation/CFPriv.h>
 #include "CFInternal.h"
 #include "CFPriv.h"
+#include "CFPrefsXPCProtocol.h"
 #include <sys/stat.h>
 #if DEPLOYMENT_TARGET_MACOSX
 #include <unistd.h>
@@ -254,7 +255,14 @@ CFTypeRef  CFPreferencesCopyValue(CFStringRef  key, CFStringRef  appName, CFStri
     CFPreferencesDomainRef domain;
     CFAssert1(appName != NULL && user != NULL && host != NULL, __kCFLogAssertion, "%s(): Cannot access preferences for a NULL application name, user, or host", __PRETTY_FUNCTION__);
     CFAssert1(key != NULL, __kCFLogAssertion, "%s(): Cannot access preferences with a NULL key", __PRETTY_FUNCTION__);
-    
+
+    if (__CFPrefsXPCClientShouldRoute()) {
+        CFTypeRef routed = NULL;
+        if (__CFPrefsXPCClientCopyValue(key, appName, user, host, &routed)) {
+            return routed;
+        }
+    }
+
     domain = _CFPreferencesStandardDomain(appName, user, host);
     if (domain) {
         return _CFPreferencesDomainCreateValueForKey(domain, key);
@@ -272,6 +280,13 @@ CFDictionaryRef CFPreferencesCopyMultiple(CFArrayRef keysToFetch, CFStringRef ap
     __CFGenericValidateType(appName, CFStringGetTypeID());
     __CFGenericValidateType(user, CFStringGetTypeID());
     __CFGenericValidateType(host, CFStringGetTypeID());
+
+    if (__CFPrefsXPCClientShouldRoute()) {
+        CFDictionaryRef routed = NULL;
+        if (__CFPrefsXPCClientCopyMultiple(keysToFetch, appName, user, host, &routed)) {
+            return routed;
+        }
+    }
 
     domain = _CFPreferencesStandardDomain(appName, user, host);
     if (!domain) return NULL;
@@ -301,6 +316,12 @@ void CFPreferencesSetValue(CFStringRef  key, CFTypeRef  value, CFStringRef  appN
     CFAssert1(appName != NULL && user != NULL && host != NULL, __kCFLogAssertion, "%s(): Cannot access preferences for a NULL application name, user, or host", __PRETTY_FUNCTION__);
     CFAssert1(key != NULL, __kCFLogAssertion, "%s(): Cannot access preferences with a NULL key", __PRETTY_FUNCTION__);
 
+    if (__CFPrefsXPCClientShouldRoute()) {
+        if (__CFPrefsXPCClientSetValue(key, value, appName, user, host)) {
+            return;
+        }
+    }
+
     domain = _CFPreferencesStandardDomain(appName, user, host);
     if (domain) {
         _CFPreferencesDomainSet(domain, key, value);
@@ -318,6 +339,12 @@ void CFPreferencesSetMultiple(CFDictionaryRef keysToSet, CFArrayRef keysToRemove
     __CFGenericValidateType(appName, CFStringGetTypeID());
     __CFGenericValidateType(user, CFStringGetTypeID());
     __CFGenericValidateType(host, CFStringGetTypeID());
+
+    if (__CFPrefsXPCClientShouldRoute()) {
+        if (__CFPrefsXPCClientSetMultiple(keysToSet, keysToRemove, appName, user, host)) {
+            return;
+        }
+    }
 
     CFTypeRef *keys = NULL;
     CFTypeRef *values;
@@ -355,6 +382,13 @@ void CFPreferencesSetMultiple(CFDictionaryRef keysToSet, CFArrayRef keysToRemove
 Boolean CFPreferencesSynchronize(CFStringRef  appName, CFStringRef  user, CFStringRef  host) {
     CFPreferencesDomainRef domain;
     CFAssert1(appName != NULL && user != NULL && host != NULL, __kCFLogAssertion, "%s(): Cannot access preferences for a NULL application name, user, or host", __PRETTY_FUNCTION__);
+
+    if (__CFPrefsXPCClientShouldRoute()) {
+        Boolean routed = false;
+        if (__CFPrefsXPCClientSynchronize(appName, user, host, &routed)) {
+            return routed;
+        }
+    }
 
     domain = _CFPreferencesStandardDomain(appName, user, host);
     if(domain) _CFApplicationPreferencesDomainHasChanged(domain);

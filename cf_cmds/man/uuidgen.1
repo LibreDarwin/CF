@@ -1,0 +1,85 @@
+.\" Copyright (C) 2026, LibreDarwin
+.\" SPDX-License-Identifier: BSD-3-Clause
+.Dd September 28, 2026
+.Dt UUIDGEN 1
+.Os
+.Sh NAME
+.Nm uuidgen
+.Nd generate a universally unique identifier
+.Sh SYNOPSIS
+.Nm
+.Op Fl hdr
+.Sh DESCRIPTION
+The
+.Nm
+utility generates a new universally unique identifier (UUID) and writes it
+to standard output as a 36-character string of hexadecimal digits separated
+by hyphens, in the canonical 8-4-4-4-12 form
+.Pq e.g. Ns Pa 67B63244-8A03-4B4C-BE96-3F1B4E5A9C10 Ns and Dd Ns Ar upper-case
+hexadecimal.
+.Pp
+The identifier is drawn from a version 4 (pseudo-random) source by
+default.
+The only option accepted is
+.Fl hdr ,
+which emits the result in a form suitable for pasting into a C header
+instead of as a bare identifier.
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl hdr
+Emit the result as a C declaration rather than as a bare identifier.
+Three lines are written: a
+.Pp
+.Dl // Ar uuid
+.Dl
+comment naming the identifier, a
+.Dl #warning Change the macro name MYUUID below to something useful!
+.Dl
+directive, and a
+.Pp
+.Dl #define MYUUID CFUUIDGetConstantUUIDWithBytes(kCFAllocatorSystemDefault, ... )
+.Dl
+macro expanding to the sixteen constituent bytes of the identifier.
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width Ds
+.It Ev CFUUIDVersionNumber
+If this variable is set and its value parses as the number
+.Ql 1 ,
+.Nm
+generates a version 1 (time-based) identifier instead of a version 4
+identifier.
+Any other value, including a value that does not parse as a number, is
+ignored and leaves the generator at version 4.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Pp
+An unrecognized option, or more than one argument, prints the usage summary
+to standard error and exits with a status of 1.
+.Sh EXAMPLES
+Print an identifier:
+.Bd -literal -offset indent
+$ uuidgen
+67B63244-8A03-4B4C-BE96-3F1B4E5A9C10
+.Ed
+.Pp
+Produce a header-ready declaration:
+.Bd -literal -offset indent
+$ uuidgen -hdr
+// 67B63244-8A03-4B4C-BE96-3F1B4E5A9C10
+#warning Change the macro name MYUUID below to something useful!
+#define MYUUID CFUUIDGetConstantUUIDWithBytes(kCFAllocatorSystemDefault, 0x67, 0xB6, \
+0x32, 0x44, 0x8A, 0x03, 0x4B, 0x4C, 0xBE, 0x96, 0x3F, 0x1B, 0x4E, 0x5A, 0x9C, 0x10)
+.Ed
+.Sh SEE ALSO
+.Xr uuid 3 ,
+.Xr uuid_string 3
+.Sh HISTORY
+This implementation is a clean-room rewrite of the CoreFoundation
+.Nm
+utility, which is distributed in the base system but is not part of
+Apple's published CoreFoundation source release.
+.Sh AUTHORS
+.An LibreDarwin

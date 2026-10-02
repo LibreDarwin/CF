@@ -1,2 +1,13 @@
 .DS_Store
+*.o
+*.a
+*.tmp
 CF-Objects/
+CF-Root/
+build/
+Build/
+local/
+xcuserdata/
+*.xcworkspace
+__pycache__/
+*.pyc

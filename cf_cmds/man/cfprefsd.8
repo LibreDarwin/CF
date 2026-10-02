@@ -1,0 +1,99 @@
+.\" Copyright (C) 2026, LibreDarwin
+.\" SPDX-License-Identifier: BSD-3-Clause
+.Dd September 28, 2026
+.Dt CFPREFSD 8
+.Os
+.Sh NAME
+.Nm cfprefsd
+.Nd per-user and per-system preferences daemon
+.Sh SYNOPSIS
+.Nm
+.Ar daemon | agent
+.Sh DESCRIPTION
+.Nm
+is the XPC service that backs the
+.Xr defaults 1
+command-line tool and the
+.Li NSUserDefaults
+machinery.
+It owns all access to persistent property lists on behalf of its clients:
+no client writes a preferences file itself, and the daemon serializes
+concurrent access, resolves the search list that a given key is read from,
+and posts change notifications to other clients.
+.Pp
+The daemon is not started by hand.
+.Sy launchd
+starts two instances of the same executable, distinguished by the single
+argument each is given:
+.Bl -tag -width "com.apple.cfprefsd.agent" -compact
+.It Daemon
+The system-wide instance, run as root, labelled
+.Li com.apple.cfprefsd.xpc.daemon .
+It exports the Mach service
+.Li com.apple.cfprefsd.daemon ,
+serves requests from any user on the system, and is the instance that
+handles the Any User and By Host search-list domains, which must be
+reachable by every session.
+.It Agent
+The per-user instance, run as the logged-in user, labelled
+.Li com.apple.cfprefsd.xpc.agent .
+It exports the Mach service
+.Li com.apple.cfprefsd.agent ,
+is registered in background sessions only, and serves that user's requests
+so that preferences access remains available even when no Aqua session
+is running.
+.El
+.Pp
+The two roles have deliberately different Mach service names; a client
+selects the daemon or the agent by which service it connects to, never by
+which executable it runs.
+.Pp
+The executable itself contains no preferences logic.
+It relabels itself through
+.Xr libquarantine 3
+so that the sandbox profile keyed to
+.Li com.apple.cfprefsd
+is applied to the process in place of one keyed to the image path, then
+hands control to
+.Fn __CFXPreferencesDaemon_main ,
+which CoreFoundation exports.
+The relabel covers the process itself, so a failure to apply it is fatal:
+the daemon logs the failure and exits rather than running unconfined.
+.Pp
+If the quarantine relabel cannot be applied,
+.Nm
+logs a fault under subsystem
+.Li com.apple.defaults ,
+category
+.Li cfprefsd ,
+and exits with the status returned by
+.Fn qtn_proc_apply_to_self .
+.Sh FILES
+.Bl -tag -width "~/Library/Preferences" -compact
+.It Pa ~/Library/Preferences
+Per-user search-list domains, one plist per bundle identifier and one per
+host-qualified domain.
+.It Pa ~/Library/Preferences/ByHost
+Per-user By Host domains, keyed by host name.
+.It Pa /Library/Preferences
+The Any User search-list domain, written only by the daemon role.
+.El
+.Sh DIAGNOSTICS
+Failures in the quarantine relabel step are the only ones logged by
+.Li cfprefsd
+itself.
+A client that cannot reach the expected Mach service is reported by
+.Sy launchd ,
+not by this program.
+.Sh SEE ALSO
+.Xr defaults 1 ,
+.Xr plutil 1 ,
+.Xr libquarantine 3 ,
+.Xr launchd.plist 5
+.Sh HISTORY
+This implementation is a clean-room rewrite of the CoreFoundation
+.Nm
+daemon, which is distributed in the base system but is not part of
+Apple's published CoreFoundation source release.
+.Sh AUTHORS
+.An LibreDarwin
