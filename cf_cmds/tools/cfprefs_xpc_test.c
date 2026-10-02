@@ -51,7 +51,7 @@ int main(void) {
     if (v) CFRelease(v);
 
     {
-        int forty_two = 42;
+        int64_t forty_two = 42;
         CFNumberRef n = CFNumberCreate(NULL, kCFNumberSInt64Type, &forty_two);
         CFPreferencesSetValue(CFSTR("count"), n, app, user, host);
         CFRelease(n);

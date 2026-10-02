@@ -100,24 +100,50 @@ CF_PRIVATE Boolean __CFPrefsXPCClientShouldRoute(void) {
  * Connection cache
  *
  * Only two services can ever be involved (agent and daemon), so a pair of
- * slots keyed by uid is enough.  Connections are never torn down: the daemon
- * lifetime is the process lifetime.
+ * slots keyed by uid is enough.  A connection whose peer went away is parked in
+ * `dead` rather than dropped on the spot: libxpc may still be running our event
+ * handler on it, so our reference is released from the next call instead.
  * ---------------------------------------------------------------------- */
 
 typedef struct {
     const char *name;
     xpc_connection_t conn;
+    xpc_connection_t dead;
 } __CFPrefsClientSlot;
 
 static __CFPrefsClientSlot __CFPrefsClientSlots[2] = {
-    { CFPrefsServiceAgentTest,  NULL },
-    { CFPrefsServiceDaemonTest, NULL },
+    { CFPrefsServiceAgentTest,  NULL, NULL },
+    { CFPrefsServiceDaemonTest, NULL, NULL },
 };
+
+/* libxpc traps with _xpc_api_misuse if a connection is resumed before an event
+ * handler is installed, so every connection here gets one.  All request/reply
+ * traffic is synchronous (see __CFPrefsClientSend), so the handler only has to
+ * keep the connection alive and notice when the peer goes away. */
+static void __CFPrefsClientEventHandler(xpc_connection_t conn, xpc_object_t event) {
+    if (xpc_get_type(event) == XPC_TYPE_ERROR) {
+        /* The daemon died.  Park the connection so the next call rebuilds it and
+         * releases ours; the caller falls back to the direct path meanwhile. */
+        __CFPrefsClientSlot *slot = &__CFPrefsClientSlots[getuid() == 0 ? 1 : 0];
+        if (slot->conn == conn) {
+            slot->conn = NULL;
+            slot->dead = conn;
+        }
+    }
+}
 
 static xpc_connection_t __CFPrefsClientGetConnection(void) {
     const char *name = __CFPrefsClientServiceName();
     __CFPrefsClientSlot *slot = &__CFPrefsClientSlots[getuid() == 0 ? 1 : 0];
 
+    /* Drop the connection whose peer died earlier.  Doing it here instead of in
+     * the event handler avoids releasing a reference libxpc is still using
+     * while it runs our callback. */
+    if (slot->dead) {
+        xpc_connection_cancel(slot->dead);
+        xpc_release(slot->dead);
+        slot->dead = NULL;
+    }
     if (slot->conn && slot->name == name) {
         return slot->conn;
     }
@@ -129,7 +155,12 @@ static xpc_connection_t __CFPrefsClientGetConnection(void) {
     slot->name = name;
     slot->conn = xpc_connection_create_mach_service(name, NULL, 0);
     if (slot->conn) {
-        xpc_connection_resume(slot->conn);
+        xpc_connection_t conn = slot->conn;
+        /* Capture the connection itself, not slot->conn: by the time the handler
+         * runs, the slot may already hold a different connection. */
+        xpc_connection_set_event_handler(conn,
+            ^(xpc_object_t e){ __CFPrefsClientEventHandler(conn, e); });
+        xpc_connection_resume(conn);
     }
     return slot->conn;
 }
@@ -338,7 +369,9 @@ static xpc_object_t __CFPrefsClientSend(xpc_object_t msg) {
 
     done = dispatch_semaphore_create(0);
     xpc_connection_send_message_with_reply(conn, msg, NULL, ^(xpc_object_t r){
-        if (xpc_get_type(r) == XPC_TYPE_DICTIONARY) reply = r;
+        /* libxpc lends us the reply for the duration of this block only; callers
+         * release it after the semaphore wait, so take a reference here. */
+        if (r && xpc_get_type(r) == XPC_TYPE_DICTIONARY) reply = xpc_retain(r);
         dispatch_semaphore_signal(done);
     });
     if (dispatch_semaphore_wait(done,
@@ -392,12 +425,19 @@ CF_PRIVATE int __CFPrefsXPCClientCopyValue(CFStringRef key, CFStringRef appName,
     {
         xpc_object_t reply = __CFPrefsClientSend(msg);
         xpc_release(msg);
+        /* A reply we can trust is authoritative even when it carries no value:
+         * the daemon buffers writes until synchronize, so falling back to the
+         * direct path here would resurrect a key the daemon just removed. */
+        if (!__CFPrefsClientReplyOK(reply)) {
+            if (reply) xpc_release(reply);
+            return 0;           /* daemon absent or errored: let the direct path decide */
+        }
         v = __CFPrefsClientReplyValue(reply);
-        if (reply) xpc_release(reply);
-    }
-    if (!v || CFGetTypeID(v) == CFNullGetTypeID()) {
-        if (v) CFRelease(v);
-        return 0;               /* not found: let the direct path decide */
+        xpc_release(reply);
+        if (v && CFGetTypeID(v) == CFNullGetTypeID()) {
+            CFRelease(v);
+            v = NULL;
+        }
     }
     *out = v;
     return 1;
@@ -429,28 +469,36 @@ CF_PRIVATE int __CFPrefsXPCClientCopyMultiple(CFArrayRef keysToFetch,
     if (reply) xpc_release(reply);
 
     if (keysToFetch) {
-        /* The daemon returned everything; narrow it to the requested keys. */
+        /* The daemon returned everything; narrow it to the requested keys.
+         * An empty/absent domain is still an authoritative answer. */
         CFMutableDictionaryRef narrowed;
         CFIndex idx, count;
-        if (!d) return 0;
-        if (CFGetTypeID(d) != CFDictionaryGetTypeID()) { CFRelease(d); return 0; }
+        if (d && CFGetTypeID(d) != CFDictionaryGetTypeID()) { CFRelease(d); return 0; }
         narrowed = CFDictionaryCreateMutable(kCFAllocatorDefault,
                                              CFArrayGetCount(keysToFetch),
                                              &kCFTypeDictionaryKeyCallBacks,
                                              &kCFTypeDictionaryValueCallBacks);
-        if (!narrowed) { CFRelease(d); return 0; }
+        if (!narrowed) { if (d) CFRelease(d); return 0; }
         count = CFArrayGetCount(keysToFetch);
-        for (idx = 0; idx < count; idx++) {
+        for (idx = 0; d && idx < count; idx++) {
             CFStringRef k = (CFStringRef)CFArrayGetValueAtIndex(keysToFetch, idx);
             CFTypeRef v = CFDictionaryGetValue((CFDictionaryRef)d, k);
             if (v) CFDictionarySetValue(narrowed, k, v);
         }
-        CFRelease(d);
+        if (d) CFRelease(d);
         *out = narrowed;
         return 1;
     }
 
-    if (!d) return 0;
+    if (!d) {
+        /* Authoritative "no such domain" -- an empty dictionary, not a
+         * fallback signal.  Falling back would read the daemon's unflushed
+         * file and resurrect stale keys. */
+        *out = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                         &kCFTypeDictionaryKeyCallBacks,
+                                         &kCFTypeDictionaryValueCallBacks);
+        return *out ? 1 : 0;
+    }
     if (CFGetTypeID(d) != CFDictionaryGetTypeID()) { CFRelease(d); return 0; }
     *out = (CFDictionaryRef)d;
     return 1;
@@ -478,20 +526,26 @@ CF_PRIVATE int __CFPrefsXPCClientSetValue(CFStringRef key, CFTypeRef value,
      *   Value absent                -> read
      * Omitting Value to mean "remove" would collide with the read, so a read
      * would silently delete the key. */
-    if (value) {
-        if (CFGetTypeID(value) == CFNullGetTypeID()) {
-            xpc_dictionary_set_value(msg, CFPrefsKeyValue, xpc_null_create());
-        } else {
-            xpc_object_t v = __CFPrefsClientCopyXPCValueFromPropertyList(value);
-            xpc_dictionary_set_value(msg, CFPrefsKeyValue, v);
-            xpc_release(v);
-        }
+    if (!value || CFGetTypeID(value) == CFNullGetTypeID()) {
+        /* An explicit null is a removal.  Omitting Value entirely would turn this
+         * into a read, because the daemon tells "remove" and "read" apart by the
+         * presence of the Value key. */
+        xpc_dictionary_set_value(msg, CFPrefsKeyValue, xpc_null_create());
+    } else {
+        xpc_object_t v = __CFPrefsClientCopyXPCValueFromPropertyList(value);
+        xpc_dictionary_set_value(msg, CFPrefsKeyValue, v);
+        xpc_release(v);
     }
     __CFPrefsClientFillContext(msg, appName, user, host);
 
     reply = __CFPrefsClientSend(msg);
     xpc_release(msg);
-    if (!reply) return 0;
+    /* Only claim success when the daemon reports no error; otherwise the caller
+     * must fall back to the direct path so the write is not silently lost. */
+    if (!__CFPrefsClientReplyOK(reply)) {
+        if (reply) xpc_release(reply);
+        return 0;
+    }
     xpc_release(reply);
     return 1;
 }
@@ -579,7 +633,12 @@ CF_PRIVATE int __CFPrefsXPCClientSetMultiple(CFDictionaryRef keysToSet,
 
     reply = __CFPrefsClientSend(msg);
     xpc_release(msg);
-    if (!reply) return 0;
+    /* Only claim success when the daemon reports no error; otherwise the caller
+     * must fall back to the direct path so the write is not silently lost. */
+    if (!__CFPrefsClientReplyOK(reply)) {
+        if (reply) xpc_release(reply);
+        return 0;
+    }
     xpc_release(reply);
     return 1;
 }

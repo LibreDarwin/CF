@@ -407,6 +407,27 @@ CFArrayRef  CFPreferencesCopyKeyList(CFStringRef  appName, CFStringRef  user, CF
     CFPreferencesDomainRef domain;
     CFAssert1(appName != NULL && user != NULL && host != NULL, __kCFLogAssertion, "%s(): Cannot access preferences for a NULL application name, user, or host", __PRETTY_FUNCTION__);
 
+    /* The wire has no dedicated key-list opcode; the domain-wide read is the
+     * same request the direct path uses to enumerate keys, so reuse it. */
+    if (__CFPrefsXPCClientShouldRoute()) {
+        CFDictionaryRef routed = NULL;
+        if (__CFPrefsXPCClientCopyMultiple(NULL, appName, user, host, &routed)) {
+            CFAllocatorRef alloc = __CFPreferencesAllocator();
+            CFIndex count = routed ? CFDictionaryGetCount(routed) : 0;
+            CFArrayRef result = NULL;
+            if (count > 0) {
+                CFTypeRef *keys = (CFTypeRef *)CFAllocatorAllocate(alloc, count * sizeof(CFTypeRef), 0);
+                if (keys) {
+                    CFDictionaryGetKeysAndValues(routed, keys, NULL);
+                    result = CFArrayCreate(alloc, keys, count, &kCFTypeArrayCallBacks);
+                    CFAllocatorDeallocate(alloc, keys);
+                }
+            }
+            if (routed) CFRelease(routed);
+            return result;
+        }
+    }
+
     domain = _CFPreferencesStandardDomain(appName, user, host);
     if (!domain) {
         return NULL;
